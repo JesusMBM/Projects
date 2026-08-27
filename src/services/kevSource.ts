@@ -21,6 +21,25 @@ interface KevCatalog {
   vulnerabilities: KevEntry[];
 }
 
+function boundedString(value: unknown, maxLength: number) {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength;
+}
+
+function isKevEntry(value: unknown): value is KevEntry {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.cveID === 'string'
+    && /^CVE-\d{4}-\d{4,7}$/.test(entry.cveID)
+    && boundedString(entry.vendorProject, 160)
+    && boundedString(entry.product, 160)
+    && boundedString(entry.vulnerabilityName, 300)
+    && boundedString(entry.dateAdded, 40)
+    && boundedString(entry.shortDescription, 2_000)
+    && boundedString(entry.requiredAction, 2_000)
+    && boundedString(entry.dueDate, 40)
+    && boundedString(entry.knownRansomwareCampaignUse, 40);
+}
+
 export interface KevRefreshResult {
   vulnerabilities: Vulnerability[];
   catalogVersion: string;
@@ -65,7 +84,10 @@ export async function refreshKevCatalog(
     throw new Error('CISA KEV response did not match the expected catalog format');
   }
 
-  const liveByCve = new Map(catalog.vulnerabilities.map((entry) => [entry.cveID, entry]));
+  const validEntries = catalog.vulnerabilities.slice(0, 5_000).filter(isKevEntry);
+  if (validEntries.length === 0) throw new Error('CISA KEV response contained no valid entries');
+
+  const liveByCve = new Map(validEntries.map((entry) => [entry.cveID, entry]));
   const merged = snapshot.map((vulnerability) => {
     const live = liveByCve.get(vulnerability.cveId);
     if (!live) return { ...vulnerability, knownExploited: false };

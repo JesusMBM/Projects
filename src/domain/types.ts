@@ -134,8 +134,15 @@ export interface WorkflowStage {
   id: 'search' | 'match' | 'prioritize' | 'plan';
   label: string;
   tool: string;
-  status: 'pending' | 'running' | 'complete';
+  status: 'pending' | 'running' | 'complete' | 'error';
   detail: string;
+}
+
+export interface WorkflowSummary {
+  searched: number;
+  matched: number;
+  prioritized: number;
+  proposals: number;
 }
 
 export interface PatchPilotState {
@@ -147,6 +154,7 @@ export interface PatchPilotState {
   activity: ActivityEvent[];
   dataSource: DataSourceStatus;
   webMcpStatus: 'checking' | 'ready' | 'unavailable' | 'error';
-  workflowStatus: 'idle' | 'running' | 'complete';
+  workflowStatus: 'idle' | 'running' | 'complete' | 'error';
   workflowStages: WorkflowStage[];
+  workflowSummary: WorkflowSummary;
 }

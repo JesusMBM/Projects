@@ -145,6 +145,6 @@ export const vulnerabilitySnapshot: Vulnerability[] = [
 
 export const publicDataSources = {
   cisaKevCatalog: CISA_KEV_URL,
-  cisaKevFeed: 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json',
+  cisaKevFeed: '/api/cisa-kev',
   nvd: 'https://nvd.nist.gov/vuln',
 };

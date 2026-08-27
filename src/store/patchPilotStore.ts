@@ -29,12 +29,25 @@ const initialStages: WorkflowStage[] = [
   { id: 'plan', label: 'Stage seven-day plan', tool: 'create_remediation_plan', status: 'pending', detail: 'Waiting' },
 ];
 
+function stagesForWindow(windowDays: number) {
+  return initialStages.map((stage) => (
+    stage.id === 'plan' ? { ...stage, label: `Stage ${windowDays}-day plan` } : { ...stage }
+  ));
+}
+
 const defaultContext: OrganizationContext = {
   organizationName: 'Northstar Commerce',
   focus: 'Protect customer-facing commerce and workforce access',
   riskPosture: 'aggressive',
   internetFacingOnly: true,
   remediationWindowDays: 7,
+};
+
+const emptyWorkflowSummary = {
+  searched: 0,
+  matched: 0,
+  prioritized: 0,
+  proposals: 0,
 };
 
 const initialFindings = prioritizeFindings(
@@ -68,6 +81,7 @@ let state: PatchPilotState = {
   webMcpStatus: 'checking',
   workflowStatus: 'idle',
   workflowStages: initialStages,
+  workflowSummary: emptyWorkflowSummary,
 };
 
 const listeners = new Set<Listener>();
@@ -116,19 +130,42 @@ export const patchPilotStore = {
     setState((current) => ({ ...current, webMcpStatus: status }));
   },
   updateContext(context: OrganizationContext) {
-    setState((current) => ({ ...current, context }));
+    setState((current) => ({
+      ...current,
+      context,
+      workflowStatus: 'idle',
+      workflowStages: stagesForWindow(context.remediationWindowDays),
+      workflowSummary: { ...emptyWorkflowSummary },
+    }));
     pushActivity(activity('Analysis context updated', `${context.organizationName} · ${context.remediationWindowDays}-day window`, 'human'));
   },
   search(input: SearchInput = {}) {
-    const result = searchVulnerabilities(state.vulnerabilities, input);
-    setState((current) => ({ ...current, searchResults: result.vulnerabilities }));
-    pushActivity(activity('Vulnerability search completed', `${result.total} catalog matches`, 'tool'));
+    const effectiveInput: SearchInput = {
+      ...input,
+      knownExploitedOnly: input.knownExploitedOnly ?? (state.context.riskPosture === 'aggressive'),
+      minCvss: input.minCvss ?? (state.context.riskPosture === 'balanced' ? 7 : undefined),
+    };
+    const result = searchVulnerabilities(state.vulnerabilities, effectiveInput);
+    setState((current) => ({
+      ...current,
+      searchResults: result.vulnerabilities,
+      workflowSummary: { ...current.workflowSummary, searched: result.total },
+    }));
+    pushActivity(activity('search_vulnerabilities completed', `${result.total} catalog matches focused in the shared view`, 'tool'));
     return result;
   },
   findAffected(input: AffectedAssetsInput = {}) {
-    const findings = findAffectedAssets(state.vulnerabilities, inventory, input);
-    setState((current) => ({ ...current, findings }));
-    pushActivity(activity('Asset correlation completed', `${findings.length} affected asset records`, 'tool'));
+    const catalog = input.cveIds?.length ? state.vulnerabilities : state.searchResults;
+    const findings = findAffectedAssets(catalog, inventory, {
+      ...input,
+      internetFacingOnly: input.internetFacingOnly ?? state.context.internetFacingOnly,
+    });
+    setState((current) => ({
+      ...current,
+      findings,
+      workflowSummary: { ...current.workflowSummary, matched: findings.length },
+    }));
+    pushActivity(activity('find_affected_assets completed', `${findings.length} synthetic asset matches focused in the shared view`, 'tool'));
     return findings;
   },
   prioritize(input: PrioritizeInput & { findingIds?: string[] } = {}) {
@@ -136,22 +173,34 @@ export const patchPilotStore = {
       ? state.findings.filter((finding) => input.findingIds?.includes(finding.id))
       : state.findings;
     const findings = prioritizeFindings(source, input);
-    setState((current) => ({ ...current, findings }));
-    pushActivity(activity('Findings prioritized', `Top ${findings.length} ranked with explainable scoring`, 'tool'));
+    setState((current) => ({
+      ...current,
+      findings,
+      workflowSummary: { ...current.workflowSummary, prioritized: findings.length },
+    }));
+    pushActivity(activity('prioritize_findings completed', `Top ${findings.length} ranked with explainable scoring`, 'tool'));
     return findings;
   },
   createPlan(input: PlanInput = {}) {
     const prioritized = prioritizeFindings(
-      updateFindingsForCurrentCatalog(),
+      state.findings,
       { internetFacingOnly: state.context.internetFacingOnly, limit: 50 },
     );
     const created = createRemediationPlan(
       prioritized,
       state.board,
-      { ...input, windowDays: input.windowDays ?? state.context.remediationWindowDays },
+      {
+        ...input,
+        windowDays: input.windowDays ?? state.context.remediationWindowDays,
+        objective: input.objective?.trim() || state.context.focus,
+      },
     );
-    setState((current) => ({ ...current, board: [...created, ...current.board] }));
-    pushActivity(activity('Remediation recommendations staged', `${created.length} proposal${created.length === 1 ? '' : 's'} awaiting human review`, 'tool'));
+    setState((current) => ({
+      ...current,
+      board: [...created, ...current.board],
+      workflowSummary: { ...current.workflowSummary, proposals: created.length },
+    }));
+    pushActivity(activity('create_remediation_plan completed', `${created.length} proposal${created.length === 1 ? '' : 's'} stopped at the human gate`, 'tool'));
     return created;
   },
   approveItem(id: string) {
@@ -185,16 +234,52 @@ export const patchPilotStore = {
       findings: updateFindingsForCurrentCatalog(current.vulnerabilities),
       board: [],
       workflowStatus: 'idle',
-      workflowStages: initialStages.map((stage) => ({ ...stage })),
+      workflowStages: stagesForWindow(current.context.remediationWindowDays),
+      workflowSummary: { ...emptyWorkflowSummary },
     }));
     pushActivity(activity('Demo workspace reset', 'Board cleared; source data retained', 'human'));
   },
   startWorkflow() {
     setState((current) => ({
       ...current,
-      board: [],
       workflowStatus: 'running',
-      workflowStages: initialStages.map((stage) => ({ ...stage })),
+      workflowStages: stagesForWindow(current.context.remediationWindowDays),
+      workflowSummary: { ...emptyWorkflowSummary },
+    }));
+  },
+  beginToolExecution(id: WorkflowStage['id']) {
+    setState((current) => {
+      const stages = id === 'search' && current.workflowStatus !== 'running'
+        ? stagesForWindow(current.context.remediationWindowDays)
+        : current.workflowStages;
+      return {
+        ...current,
+        workflowStatus: 'running',
+        workflowSummary: id === 'search' && current.workflowStatus !== 'running'
+          ? { ...emptyWorkflowSummary }
+          : current.workflowSummary,
+        workflowStages: stages.map((stage) => (
+          stage.id === id ? { ...stage, status: 'running', detail: 'Invoked through document.modelContext' } : stage
+        )),
+      };
+    });
+  },
+  completeToolExecution(id: WorkflowStage['id'], detail: string) {
+    setState((current) => ({
+      ...current,
+      workflowStatus: id === 'plan' ? 'complete' : 'running',
+      workflowStages: current.workflowStages.map((stage) => (
+        stage.id === id ? { ...stage, status: 'complete', detail } : stage
+      )),
+    }));
+  },
+  failToolExecution(id: WorkflowStage['id'], detail: string) {
+    setState((current) => ({
+      ...current,
+      workflowStatus: 'error',
+      workflowStages: current.workflowStages.map((stage) => (
+        stage.id === id ? { ...stage, status: 'error', detail } : stage
+      )),
     }));
   },
   updateStage,

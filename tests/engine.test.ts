@@ -60,6 +60,27 @@ describe('PatchPilot triage engine', () => {
     expect(plan.at(-1)?.dueDate).toBe('2026-09-03');
   });
 
+  it('uses known ransomware only as a zero-point equal-score tie-breaker', () => {
+    const [first, second] = findAffectedAssets(vulnerabilitySnapshot, inventory).slice(0, 2);
+    const alphabeticallyFirst = {
+      ...first,
+      id: 'A-NO-RANSOMWARE',
+      score: 90,
+      vulnerability: { ...first.vulnerability, knownRansomware: false },
+    };
+    const ransomwareTieBreaker = {
+      ...second,
+      id: 'Z-KNOWN-RANSOMWARE',
+      score: 90,
+      vulnerability: { ...second.vulnerability, knownRansomware: true },
+    };
+
+    const ranked = prioritizeFindings([alphabeticallyFirst, ransomwareTieBreaker], { limit: 2 });
+
+    expect(ranked.map((finding) => finding.id)).toEqual(['Z-KNOWN-RANSOMWARE', 'A-NO-RANSOMWARE']);
+    expect(ranked[0].score).toBe(ranked[1].score);
+  });
+
   it('deduplicates existing board recommendations', () => {
     const prioritized = prioritizeFindings(
       findAffectedAssets(vulnerabilitySnapshot, inventory, { internetFacingOnly: true }),

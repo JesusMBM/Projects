@@ -155,7 +155,7 @@ export function createRemediationPlan(
     targetDay: targetDays[index],
     action: `Upgrade ${finding.software.name} ${finding.software.version} to ${finding.fixVersion}.`,
     validation: `Confirm the fixed version on ${finding.asset.hostname}, re-scan, and review service telemetry.`,
-    rationale: `${finding.score}/100 risk: ${finding.scoreSignals.join(' · ')}. ${input.objective?.trim() || 'Prioritized for the active seven-day response window.'}`,
+    rationale: `${finding.score}/100 risk: ${finding.scoreSignals.join(' · ')}. ${input.objective?.trim() || `Prioritized for the active ${windowDays}-day response window.`}`,
     notes: '',
     score: finding.score,
     createdAt: now.toISOString(),

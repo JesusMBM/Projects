@@ -48,7 +48,13 @@ import type {
 import { patchPilotStore, usePatchPilotState } from './store/patchPilotStore';
 import { buildPatchPilotTools, registerPatchPilotTools } from './webmcp/registerTools';
 
-const demoPrompt = 'Find actively exploited vulnerabilities affecting our internet-facing systems, prioritize the top three, and create a seven-day remediation plan.';
+function buildDemoPrompt(context: OrganizationContext) {
+  const vulnerabilityScope = context.riskPosture === 'aggressive'
+    ? 'actively exploited vulnerabilities'
+    : 'high-risk vulnerabilities';
+  const assetScope = context.internetFacingOnly ? 'our internet-facing systems' : 'our synthetic asset inventory';
+  return `Find ${vulnerabilityScope} affecting ${assetScope}, prioritize the top three, and create a ${context.remediationWindowDays}-day remediation plan.`;
+}
 
 const wait = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
@@ -70,23 +76,22 @@ function plural(count: number, single: string, multiple = `${single}s`) {
 
 function App() {
   const state = usePatchPilotState();
+  const demoPrompt = buildDemoPrompt(state.context);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<'context' | 'inventory' | 'tools' | null>(null);
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [editingItem, setEditingItem] = useState<RemediationItem | null>(null);
+  const [approvingItem, setApprovingItem] = useState<RemediationItem | null>(null);
   const [query, setQuery] = useState('');
   const [severity, setSeverity] = useState<Severity | 'all'>('all');
   const [kevOnly, setKevOnly] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const boardRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    let dispose: () => void = () => {};
-    void registerPatchPilotTools().then((cleanup) => {
-      dispose = cleanup;
-    });
-    return () => dispose();
+    return registerPatchPilotTools();
   }, []);
 
   const searchCveIds = useMemo(
@@ -128,18 +133,18 @@ function App() {
     patchPilotStore.startWorkflow();
     await wait(350);
 
-    patchPilotStore.updateStage('search', 'running', 'Querying loaded public data');
-    const searchResult = patchPilotStore.search({ knownExploitedOnly: true, limit: 50 });
+    patchPilotStore.updateStage('search', 'running', state.context.riskPosture === 'aggressive' ? 'Filtering to known exploitation' : 'Reviewing high-risk public records');
+    const searchResult = patchPilotStore.search({ limit: 50 });
     await wait(650);
-    patchPilotStore.updateStage('search', 'complete', `${searchResult.total} KEV records found`);
+    patchPilotStore.updateStage('search', 'complete', `${searchResult.total} public records in scope`);
 
     patchPilotStore.updateStage('match', 'running', 'Correlating explicit product versions');
     const findings = patchPilotStore.findAffected({
       cveIds: searchResult.vulnerabilities.map((vulnerability) => vulnerability.cveId),
-      internetFacingOnly: true,
+      internetFacingOnly: state.context.internetFacingOnly,
     });
     await wait(650);
-    patchPilotStore.updateStage('match', 'complete', `${findings.length} exposed asset matches`);
+    patchPilotStore.updateStage('match', 'complete', `${findings.length} ${state.context.internetFacingOnly ? 'exposed' : 'in-scope'} asset matches`);
 
     patchPilotStore.updateStage('prioritize', 'running', 'Scoring severity, exploitation, exposure, and criticality');
     const prioritized = patchPilotStore.prioritize({
@@ -165,7 +170,10 @@ function App() {
 
   async function refreshData() {
     setRefreshing(true);
-    await patchPilotStore.refreshData();
+    const result = await patchPilotStore.refreshData();
+    setRefreshNotice(result.ok
+      ? { tone: 'success', text: `Live CISA KEV loaded · ${result.count} records` }
+      : { tone: 'error', text: 'Live refresh unavailable · bundled snapshot retained' });
     setRefreshing(false);
   }
 
@@ -181,6 +189,16 @@ function App() {
     unavailable: 'UI fallback mode',
     error: 'Tool registration error',
   }[state.webMcpStatus];
+
+  const workflowLabel = {
+    idle: 'Ready',
+    running: 'Working',
+    complete: 'Complete',
+    error: 'Needs attention',
+  }[state.workflowStatus];
+  const activePlanWindow = state.board.length > 0
+    ? Math.max(...state.board.map((item) => item.targetDay))
+    : state.context.remediationWindowDays;
 
   return (
     <div className="app-shell">
@@ -259,6 +277,14 @@ function App() {
             </button>
           </div>
         </header>
+
+        {refreshNotice && (
+          <div className={`refresh-notice refresh-notice--${refreshNotice.tone}`} role="status">
+            {refreshNotice.tone === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            <span>{refreshNotice.text}</span>
+            <button type="button" onClick={() => setRefreshNotice(null)} aria-label="Dismiss data status"><X size={14} /></button>
+          </div>
+        )}
 
         <div className="dashboard" id="overview">
           <section className="page-intro" aria-labelledby="page-title">
@@ -400,10 +426,15 @@ function App() {
               <div className="agent-panel-topline">
                 <div className="agent-identity"><Bot size={18} /><span>Agent workspace</span></div>
                 <span className={`agent-state agent-state--${state.workflowStatus}`}>
-                  <i /> {state.workflowStatus === 'idle' ? 'Ready' : state.workflowStatus === 'running' ? 'Working' : 'Complete'}
+                  <i /> {workflowLabel}
                 </span>
               </div>
               <h2 id="agent-panel-title">One prompt. Four visible tools.</h2>
+              <div className="ownership-split" aria-label="Agent and reviewer responsibilities">
+                <div><span><Bot size={14} /> Agent</span><small>Search · Match · Rank · Draft</small></div>
+                <ArrowRight size={14} aria-hidden="true" />
+                <div><span><UserCheck size={14} /> Reviewer</span><small>Context · Edit · Approve</small></div>
+              </div>
               <div className="prompt-box">
                 <Sparkles size={16} />
                 <p>“{demoPrompt}”</p>
@@ -414,7 +445,7 @@ function App() {
                 {state.workflowStages.map((stage, index) => (
                   <div className={`workflow-stage workflow-stage--${stage.status}`} key={stage.id}>
                     <div className="stage-rail">
-                      <span>{stage.status === 'complete' ? <Check size={13} /> : index + 1}</span>
+                      <span>{stage.status === 'complete' ? <Check size={13} /> : stage.status === 'error' ? <AlertTriangle size={12} /> : index + 1}</span>
                       {index < state.workflowStages.length - 1 && <i />}
                     </div>
                     <div>
@@ -426,16 +457,28 @@ function App() {
                 ))}
               </div>
 
+              {state.workflowStatus === 'complete' && (
+                <div className="run-receipt" aria-label="Completed evidence funnel">
+                  <span><strong>{state.workflowSummary.searched}</strong><small>CVEs</small></span>
+                  <ArrowRight size={13} />
+                  <span><strong>{state.workflowSummary.matched}</strong><small>matches</small></span>
+                  <ArrowRight size={13} />
+                  <span><strong>{state.workflowSummary.prioritized}</strong><small>priorities</small></span>
+                  <ArrowRight size={13} />
+                  <span><strong>{state.workflowSummary.proposals}</strong><small>proposals</small></span>
+                </div>
+              )}
+
               <div className="agent-actions">
-                <button className="primary-button primary-button--light" type="button" onClick={runGuidedWorkflow} disabled={state.workflowStatus === 'running'}>
-                  {state.workflowStatus === 'running' ? <RefreshCw className="spin" size={16} /> : <Play size={16} fill="currentColor" />}
-                  {state.workflowStatus === 'idle' ? 'Run guided workflow' : state.workflowStatus === 'running' ? 'Running tools…' : 'Run again'}
+                <button className="primary-button primary-button--light" type="button" onClick={state.workflowStatus === 'complete' ? () => boardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : runGuidedWorkflow} disabled={state.workflowStatus === 'running'}>
+                  {state.workflowStatus === 'running' ? <RefreshCw className="spin" size={16} /> : state.workflowStatus === 'complete' ? <ArrowRight size={16} /> : <Play size={16} fill="currentColor" />}
+                  {state.workflowStatus === 'idle' ? 'Run guided workflow' : state.workflowStatus === 'running' ? 'Running tools…' : state.workflowStatus === 'error' ? 'Retry guided workflow' : 'Review proposed plan'}
                 </button>
-                {state.workflowStatus === 'complete' && (
+                {(state.workflowStatus === 'complete' || state.workflowStatus === 'error') && (
                   <button className="ghost-button ghost-button--dark" type="button" onClick={() => patchPilotStore.resetDemo()}><RotateCcw size={15} /> Reset</button>
                 )}
               </div>
-              <p className="agent-footnote"><ShieldCheck size={14} /> The guided run uses the same functions exposed to WebMCP. Approval is never agent-accessible.</p>
+              <p className="agent-footnote"><ShieldCheck size={14} /> The guided preview uses the same handlers exposed to WebMCP. Approval is not registered as a tool.</p>
             </aside>
           </section>
 
@@ -443,13 +486,19 @@ function App() {
             <div className="board-header">
               <div>
                 <div className="section-kicker">Shared decision surface</div>
-                <h2>Seven-day remediation board</h2>
+                <h2>{activePlanWindow}-day remediation board</h2>
                 <p>Agent recommendations arrive as proposals. A person can modify, approve, and own every change.</p>
               </div>
               <div className="board-summary">
                 <span><i className="legend-dot legend-dot--proposed" /> {state.board.filter((item) => item.status === 'proposed').length} proposed</span>
                 <span><i className="legend-dot legend-dot--approved" /> {state.board.filter((item) => item.status === 'approved').length} approved</span>
               </div>
+            </div>
+
+            <div className="decision-firewall">
+              <div className="decision-firewall-icon"><ShieldCheck size={18} /></div>
+              <div><strong>Human review gate</strong><span>Tools stop at proposals. Approval is not exposed through WebMCP and requires direct review in the page.</span></div>
+              <span className="human-only-badge"><UserCheck size={13} /> Not a tool</span>
             </div>
 
             {state.board.length === 0 ? (
@@ -463,13 +512,13 @@ function App() {
               </div>
             ) : (
               <div className="board-grid">
-                {(['proposed', 'approved', 'in_progress', 'verified'] as RemediationStatus[]).map((status) => (
+                {(['proposed', 'approved'] as RemediationStatus[]).map((status) => (
                   <BoardLane
                     key={status}
                     status={status}
                     items={state.board.filter((item) => item.status === status)}
                     onEdit={setEditingItem}
-                    onApprove={(id) => patchPilotStore.approveItem(id)}
+                    onApprove={(id) => setApprovingItem(state.board.find((item) => item.id === id) ?? null)}
                   />
                 ))}
               </div>
@@ -479,7 +528,7 @@ function App() {
           <section className="audit-strip" aria-labelledby="activity-title">
             <div className="audit-heading">
               <Activity size={17} />
-              <div><h2 id="activity-title">Activity trail</h2><span>Every agent and human action stays visible</span></div>
+              <div><h2 id="activity-title">Activity trail</h2><span>Recent agent and human actions stay visible</span></div>
             </div>
             <div className="audit-events">
               {state.activity.slice(0, 4).map((event) => (
@@ -508,6 +557,16 @@ function App() {
       )}
       {selectedFinding && <FindingDrawer finding={selectedFinding} onClose={() => setSelectedFinding(null)} />}
       {editingItem && <EditRemediationDialog item={editingItem} onClose={() => setEditingItem(null)} />}
+      {approvingItem && (
+        <ApproveRemediationDialog
+          item={approvingItem}
+          onClose={() => setApprovingItem(null)}
+          onConfirm={() => {
+            patchPilotStore.approveItem(approvingItem.id);
+            setApprovingItem(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -681,7 +740,7 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
           <ScoreRow label="Known exploitation" value={finding.vulnerability.knownExploited ? 25 : 0} max={25} />
           <ScoreRow label="Internet exposure" value={finding.asset.internetFacing ? 15 : 0} max={15} />
           <ScoreRow label="Business criticality" value={finding.asset.criticality * 2} max={10} />
-        </div></section>
+        </div><div className="tie-break-note"><Info size={14} /><span><strong>Equal-score tie-break:</strong> {finding.vulnerability.knownRansomware ? 'known ransomware use ranks this finding first' : 'no known ransomware use'}. It adds zero points.</span></div></section>
         <section className="detail-section"><h3>Affected synthetic asset</h3><dl className="detail-grid"><div><dt>Hostname</dt><dd>{finding.asset.hostname}</dd></div><div><dt>Service</dt><dd>{finding.asset.service}</dd></div><div><dt>Owner</dt><dd>{finding.asset.owner}</dd></div><div><dt>Installed</dt><dd>{finding.software.name} {finding.software.version}</dd></div></dl></section>
         <section className="detail-section"><h3>Recommended response</h3><div className="response-block"><PackageCheck size={18} /><div><strong>Upgrade to {finding.fixVersion}</strong><p>{finding.vulnerability.requiredAction}</p></div></div></section>
         <a className="source-link" href={finding.vulnerability.sourceUrl} target="_blank" rel="noreferrer">Open NVD record <ExternalLink size={14} /></a>
@@ -692,6 +751,33 @@ function FindingDrawer({ finding, onClose }: { finding: Finding; onClose: () => 
 
 function ScoreRow({ label, value, max }: { label: string; value: number; max: number }) {
   return <div className="score-row"><span>{label}</span><div><i style={{ width: `${(value / max) * 100}%` }} /></div><strong>+{value}</strong></div>;
+}
+
+function ApproveRemediationDialog({
+  item,
+  onClose,
+  onConfirm,
+}: {
+  item: RemediationItem;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="modal-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="edit-dialog approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approval-title">
+        <div className="dialog-header"><div><span className="section-kicker">Direct reviewer action</span><h2 id="approval-title">Approve {item.cveId}?</h2></div><button className="icon-button" type="button" onClick={onClose} aria-label="Close approval"><X size={18} /></button></div>
+        <div className="human-gate"><UserCheck size={17} /><span>This action is not exposed through WebMCP. Confirm the evidence, owner, and target before committing.</span></div>
+        <dl className="approval-summary">
+          <div><dt>Risk</dt><dd>{item.score}/100</dd></div>
+          <div><dt>Asset</dt><dd>{item.hostname}</dd></div>
+          <div><dt>Owner</dt><dd>{item.owner}</dd></div>
+          <div><dt>Target</dt><dd>{formatDate(item.dueDate)}</dd></div>
+        </dl>
+        <p className="approval-action">{item.action}</p>
+        <div className="dialog-actions"><button className="ghost-button" type="button" onClick={onClose}>Cancel</button><button className="primary-button" type="button" onClick={onConfirm}><Check size={16} /> Confirm approval</button></div>
+      </section>
+    </div>
+  );
 }
 
 function EditRemediationDialog({ item, onClose }: { item: RemediationItem; onClose: () => void }) {
