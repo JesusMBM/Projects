@@ -137,6 +137,8 @@ npm run test:e2e
 
 The suite covers matching, scoring, the zero-point ransomware tie-breaker, plan sequencing, deduplication, schemas, strict runtime validation, shared-state updates, cancellation, context-driven defaults, the serverless data boundary, desktop/mobile interactions, the human approval gate, and serious/critical axe findings.
 
+Final release verification on August 27, 2026: **19/19 Vitest checks passed; 14 Playwright checks passed with 2 intentional device-specific skips; six responsive visual captures completed with zero page or console errors; and the production native WebMCP smoke completed 12 → 8 → 3 → 3 with zero warnings, errors, or failed requests.**
+
 `npm run qa:visual` captures 375 px, 768 px, and 1440 px screenshots after a server is running. It also fails on page-level horizontal overflow, uncaught errors, or console errors.
 
 ## Deploy

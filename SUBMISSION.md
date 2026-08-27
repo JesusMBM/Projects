@@ -162,7 +162,7 @@ PatchPilot was built from scratch with public vulnerability facts and synthetic 
 
 - [x] Public HTTPS URL exists.
 - [x] Public source branch includes setup instructions, WebMCP implementation, license, and clean-room notice.
-- [ ] Deploy the final release commit and repeat the native **12 → 8 → 3 → 3** smoke test on the live URL.
+- [x] Deploy the final release and repeat the native **12 → 8 → 3 → 3** smoke test on the live URL (Chrome 151; zero console warnings/errors, page errors, or failed requests).
 - [ ] Decide whether to enroll the exact production origin in the applicable Chrome Origin Trial; otherwise document and record the supported flagged-Chrome path.
 - [ ] Capture the three final screenshots using the plan above.
 - [ ] Record the native-agent demo with audio in 2:25 or less.
