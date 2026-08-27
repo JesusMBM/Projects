@@ -6,6 +6,8 @@ The project is intentionally narrow: one polished dashboard, four reliable WebMC
 
 **Live application:** [https://patchpilot-webmcp.netlify.app](https://patchpilot-webmcp.netlify.app)
 
+**Public source:** [github.com/JesusMBM/Projects/tree/patchpilot-webmcp](https://github.com/JesusMBM/Projects/tree/patchpilot-webmcp)
+
 ## The demonstration
 
 Ask a compatible browser agent:

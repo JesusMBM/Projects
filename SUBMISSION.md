@@ -2,6 +2,8 @@
 
 **Live application:** [https://patchpilot-webmcp.netlify.app](https://patchpilot-webmcp.netlify.app)
 
+**Public source:** [github.com/JesusMBM/Projects/tree/patchpilot-webmcp](https://github.com/JesusMBM/Projects/tree/patchpilot-webmcp)
+
 ## Short description
 
 PatchPilot is an agent-powered vulnerability-triage workspace. A browser agent searches public CVE and CISA KEV data, correlates vulnerabilities with a synthetic asset inventory, explains a business-aware priority score, and stages a seven-day remediation plan on a shared board. A human reviews, edits, and approves every recommendation.
@@ -63,7 +65,7 @@ Show the live/snapshot data indicator and briefly mention graceful fallback. Clo
 ## Submission checklist
 
 - [x] Public HTTPS deployment is live and tested in desktop and mobile Chrome.
-- [ ] Public repository includes source, setup/testing instructions, `LICENSE`, and visible `document.modelContext.registerTool` usage.
+- [x] Public source branch includes source, setup/testing instructions, `LICENSE`, and visible `document.modelContext.registerTool` usage.
 - [ ] Public YouTube demo has audio and is under 3:00 (target 2:35).
 - [ ] Devpost description includes problem, user benefit, collaboration, and WebMCP implementation.
 - [ ] Video and screenshots contain only this clean-room interface.
